@@ -2,22 +2,45 @@ import streamlit as st
 import pandas as pd
 from sklearn.ensemble import IsolationForest
 
-st.title("CERN Anomaly Detector")
+st.set_page_config(page_title="CERN AI Analyzer", layout="wide")
 
-uploaded_file = st.file_uploader("CSV hochladen", type=["csv"])
+st.title("🧪 CERN Event Anomaly Analyzer")
+
+# -----------------------------
+# 1. UPLOAD
+# -----------------------------
+uploaded_file = st.file_uploader("📁 CSV hochladen", type=["csv"])
 
 if uploaded_file:
 
-    # CSV laden
     df = pd.read_csv(uploaded_file)
 
-    st.subheader("📊 Datenübersicht")
+    st.header("🔵 Phase 1: Rohdaten")
     st.write(df.head())
+    st.write(f"📦 Gesamt Events: {len(df):,}")
 
-    st.write("📌 Spalten im Datensatz:")
-    st.write(df.columns.tolist())
+    # -----------------------------
+    # 2. CLEANING
+    # -----------------------------
+    st.header("🟡 Phase 2: Datenbereinigung")
 
-    # gewünschte Features (aus deinem CERN-Setup)
+    cleaning_mode = st.radio(
+        "Umgang mit fehlenden Werten",
+        ["NaNs entfernen", "Mit Median füllen"]
+    )
+
+    if cleaning_mode == "NaNs entfernen":
+        df_clean = df.dropna()
+    else:
+        df_clean = df.fillna(df.median(numeric_only=True))
+
+    st.write(f"📦 Nach Cleaning: {len(df_clean):,}")
+
+    # -----------------------------
+    # 3. FEATURE SELECTION
+    # -----------------------------
+    st.header("🟠 Phase 3: Physikalische Features")
+
     features = [
         "Bplus_PT",
         "Bplus_M",
@@ -26,38 +49,65 @@ if uploaded_file:
         "muminus_PT"
     ]
 
-    # nur existierende Spalten nutzen (verhindert KeyError!)
-    available_features = [f for f in features if f in df.columns]
+    available_features = [f for f in features if f in df_clean.columns]
 
-    if len(available_features) == 0:
-        st.error("❌ Keine passenden Features in der CSV gefunden!")
+    st.write("✔ Verwendete Features:")
+    st.write(available_features)
+
+    if len(available_features) < 2:
+        st.error("Zu wenige Features vorhanden!")
         st.stop()
 
-    st.success(f"✔ Genutzte Features: {available_features}")
+    X = df_clean[available_features]
 
-    # Daten vorbereiten
-    X = df[available_features].dropna()
+    # -----------------------------
+    # 4. KI MODELL
+    # -----------------------------
+    st.header("🔴 Phase 4: KI Anomalie-Erkennung")
 
-    st.write(f"📦 Verwendete Zeilen: {len(X)}")
+    contamination = st.slider(
+        "Anomalie-Sensitivität",
+        0.01, 0.2, 0.05
+    )
 
-    # Modell
-    model = IsolationForest(contamination=0.05, random_state=42)
+    model = IsolationForest(
+        contamination=contamination,
+        random_state=42
+    )
+
     model.fit(X)
 
-    # Vorhersage
     preds = model.predict(X)
 
-    # -1 = Anomalie, 1 = normal
-    X = X.copy()
-    X["Anomalie"] = preds
+    result = X.copy()
+    result["Anomaly"] = preds
 
-    # Anzeige
-    st.subheader("🔎 Ergebnisse")
-    st.write(X.head())
+    st.write(result.head())
+
+    normal = (result["Anomaly"] == 1).sum()
+    anomaly = (result["Anomaly"] == -1).sum()
+
+    st.metric("Normale Events", normal)
+    st.metric("Anomalien", anomaly)
+
+    # -----------------------------
+    # 5. VISUALISIERUNG
+    # -----------------------------
+    st.header("🟣 Phase 5: Visualisierung")
+
+    plot_df = result.copy()
+
+    if len(available_features) >= 2:
+        st.subheader("Feature Space")
+
+        chart_data = plot_df[[available_features[0], available_features[1], "Anomaly"]]
+
+        st.scatter_chart(
+            chart_data,
+            x=available_features[0],
+            y=available_features[1]
+        )
 
     st.subheader("📊 Verteilung")
-    st.write(X["Anomalie"].value_counts())
 
-    # einfache Visualisierung
-    st.subheader("📈 Beispiel Plot")
-    st.scatter_chart(X[[available_features[0], available_features[1]]])
+    st.bar_chart(result["Anomaly"].value_counts())
