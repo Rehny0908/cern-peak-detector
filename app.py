@@ -1,64 +1,63 @@
 import streamlit as st
 import pandas as pd
-import tensorflow as tf
-from sklearn.preprocessing import StandardScaler
-from tensorflow.keras import layers
+from sklearn.ensemble import IsolationForest
 
-st.title("CERN Anomalie Detektor (Eigenes Modell)")
+st.title("CERN Anomaly Detector")
 
 uploaded_file = st.file_uploader("CSV hochladen", type=["csv"])
 
 if uploaded_file:
+
+    # CSV laden
     df = pd.read_csv(uploaded_file)
 
-    # Features auswählen
+    st.subheader("📊 Datenübersicht")
+    st.write(df.head())
+
+    st.write("📌 Spalten im Datensatz:")
+    st.write(df.columns.tolist())
+
+    # gewünschte Features (aus deinem CERN-Setup)
     features = [
         "Bplus_PT",
         "Bplus_M",
         "Bplus_IPCHI2_OWNPV",
         "muplus_PT",
-        "muplus_ProbNNmu",
-        "muminus_PT",
-        "muminus_ProbNNmu"
+        "muminus_PT"
     ]
 
-    df = df[features].dropna()
+    # nur existierende Spalten nutzen (verhindert KeyError!)
+    available_features = [f for f in features if f in df.columns]
 
-    st.write(f"Anzahl Events: {len(df)}")
+    if len(available_features) == 0:
+        st.error("❌ Keine passenden Features in der CSV gefunden!")
+        st.stop()
 
-    # Normalisieren
-    scaler = StandardScaler()
-    X = scaler.fit_transform(df)
+    st.success(f"✔ Genutzte Features: {available_features}")
 
-    # Autoencoder bauen
-    model = tf.keras.Sequential([
-        layers.Dense(16, activation='relu', input_shape=(X.shape[1],)),
-        layers.Dense(8, activation='relu'),
-        layers.Dense(16, activation='relu'),
-        layers.Dense(X.shape[1])
-    ])
+    # Daten vorbereiten
+    X = df[available_features].dropna()
 
-    model.compile(optimizer='adam', loss='mse')
+    st.write(f"📦 Verwendete Zeilen: {len(X)}")
 
-    # Training
-    with st.spinner("Trainiere Modell..."):
-        model.fit(X, X, epochs=10, batch_size=32, verbose=0)
+    # Modell
+    model = IsolationForest(contamination=0.05, random_state=42)
+    model.fit(X)
 
-    # Rekonstruktion
-    recon = model.predict(X)
+    # Vorhersage
+    preds = model.predict(X)
 
-    # Fehler berechnen
-    loss = tf.reduce_mean(tf.square(X - recon), axis=1)
-
-    # Schwelle definieren
-    threshold = loss.numpy().mean() + loss.numpy().std()
-
-    df["Fehler"] = loss.numpy()
-    df["Anomalie"] = df["Fehler"] > threshold
+    # -1 = Anomalie, 1 = normal
+    X = X.copy()
+    X["Anomalie"] = preds
 
     # Anzeige
-    st.write("Ergebnisse:")
-    st.write(df.head())
+    st.subheader("🔎 Ergebnisse")
+    st.write(X.head())
 
-    st.write("Anzahl Anomalien:")
-    st.write(df["Anomalie"].value_counts())
+    st.subheader("📊 Verteilung")
+    st.write(X["Anomalie"].value_counts())
+
+    # einfache Visualisierung
+    st.subheader("📈 Beispiel Plot")
+    st.scatter_chart(X[[available_features[0], available_features[1]]])
