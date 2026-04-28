@@ -2,6 +2,47 @@ import streamlit as st
 import pandas as pd
 from sklearn.ensemble import IsolationForest
 
+import joblib, json, torch
+# --- Autoencoder: Klasse (muss mit train_autoencoder kompatibel sein) ---
+import torch.nn as nn
+from torch import Tensor
+
+# Duplikat der AE-Klasse (identisch zum Training)
+class AE(nn.Module):
+    def __init__(self, n_features):
+        super().__init__()
+        h = max(8, n_features*2//3)
+        latent = max(2, n_features // 3)
+        self.encoder = nn.Sequential(
+            nn.Linear(n_features, h),
+            nn.ReLU(),
+            nn.Linear(h, latent),
+            nn.ReLU()
+        )
+        self.decoder = nn.Sequential(
+            nn.Linear(latent, h),
+            nn.ReLU(),
+            nn.Linear(h, n_features)
+        )
+    def forward(self, x: Tensor):
+        return self.decoder(self.encoder(x))
+
+# --- Pfade zu deinen gespeicherten Artefakten ---
+AE_SCALER = "scaler.joblib"
+AE_MODEL = "ae_model.pt"
+AE_META = "ae_meta.json"
+
+# lade falls vorhanden
+ae_artifacts_loaded = False
+try:
+    ae_scaler = joblib.load(AE_SCALER)
+    ae_meta = json.load(open(AE_META))
+    # AE-Instanz wird später mit korrekter n_features erzeugt
+    ae_artifacts_loaded = True
+except Exception:
+    ae_artifacts_loaded = False
+
+
 st.set_page_config(page_title="CERN KI Analyzer", layout="wide")
 
 st.title("🧪 KI-gestützte Analyse von CERN-Daten")
@@ -125,42 +166,55 @@ Die KI lernt typische Ereignisse und erkennt Abweichungen.
 👉 Grün = normal  
 """)
 
-    if len(X) < 100:
-        st.warning("Zu wenige Daten für KI")
+if len(X) < 100:
+    st.warning("Zu wenige Daten für KI")
+else:
+    # IsolationForest (wie bisher)
+    contamination = st.slider("Wie viele Anomalien (IsolationForest)?", 0.01, 0.2, 0.05)
+    if_model = IsolationForest(contamination=contamination, random_state=42)
+    if_model.fit(X)
+    if_preds = if_model.predict(X)
+    X = X.copy()
+    X["IF_Anomalie"] = if_preds
+    normal = (X["IF_Anomalie"] == 1).sum()
+    anomaly = (X["IF_Anomalie"] == -1).sum()
+    st.write(f"🟢 IF Normale Events: {normal}")
+    st.write(f"🔴 IF Anomalien: {anomaly}")
+
+    # Autoencoder (falls Artefakte geladen)
+    if ae_artifacts_loaded and all(f in X.columns for f in ae_meta["features"]):
+        X_ae = X[ae_meta["features"]].fillna(X[ae_meta["features"]].median()).values.astype("float32")
+        X_scaled = ae_scaler.transform(X_ae)
+        model = AE(n_features=X_scaled.shape[1])
+        model.load_state_dict(torch.load(AE_MODEL, map_location="cpu"))
+        model.eval()
+        with torch.no_grad():
+            recon = model(torch.from_numpy(X_scaled)).numpy()
+        ae_error = ((recon - X_scaled)**2).mean(axis=1)
+        X["ae_error"] = ae_error
+        default_thresh = ae_meta.get("threshold", float(np.percentile(ae_error,95)))
+        thresh = st.slider("AE Threshold", float(ae_error.min()), float(ae_error.max()), default_thresh)
+        X["AE_Anomalie"] = X["ae_error"] > thresh
+        st.write(f"🔴 AE Anomalien: {int(X['AE_Anomalie'].sum())}")
     else:
-        contamination = st.slider(
-            "Wie viele Anomalien?",
-            0.01, 0.2, 0.05
-        )
+        st.info("Autoencoder‑Artefakte nicht gefunden oder fehlende Features; nur IsolationForest ausgeführt.")
 
-        model = IsolationForest(
-            contamination=contamination,
-            random_state=42
-        )
-
-        model.fit(X)
-        preds = model.predict(X)
-
-        X = X.copy()
-        X["Anomalie"] = preds
-
-        normal = (X["Anomalie"] == 1).sum()
-        anomaly = (X["Anomalie"] == -1).sum()
-
-        st.write(f"🟢 Normale Events: {normal}")
-        st.write(f"🔴 Anomalien: {anomaly}")
-
-        # -----------------------------
-        # 6. VISUALISIERUNG
-        # -----------------------------
-        st.header("🟣 Phase 6: Visualisierung")
-
-        numeric_cols = X.select_dtypes(include="number").columns
-
-        if len(numeric_cols) >= 2:
-            plot_df = X[numeric_cols[:2]]
-
-            st.scatter_chart(plot_df)
-
-        st.subheader("📊 Verteilung")
-        st.bar_chart(X["Anomalie"].value_counts())
+    # Vergleich & Visualisierung
+    st.header("🟣 Phase 6: Vergleich & Visualisierung")
+    if "AE_Anomalie" in X.columns:
+        both = pd.DataFrame({
+            "IF": X["IF_Anomalie"],
+            "AE": X["AE_Anomalie"],
+            "ae_error": X.get("ae_error", pd.Series([0]*len(X)))
+        }, index=X.index)
+        st.write("Kontingenztabelle IF vs AE:")
+        st.write(pd.crosstab(both["IF"], both["AE"]))
+        st.subheader("Top AE Anomalien")
+        st.dataframe(X.loc[X["AE_Anomalie"].sort_values(ascending=False).index, ae_meta["features"] + ["ae_error"]].head(20))
+    # existing simple plots
+    numeric_cols = X.select_dtypes(include="number").columns
+    if len(numeric_cols) >= 2:
+        plot_df = X[numeric_cols[:2]]
+        st.scatter_chart(plot_df)
+    st.subheader("📊 IF Verteilung")
+    st.bar_chart(X["IF_Anomalie"].value_counts())
