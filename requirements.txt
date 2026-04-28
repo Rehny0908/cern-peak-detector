@@ -1,4 +1,7 @@
 streamlit
 pandas
 scikit-learn
+numpy
+joblib
+torch==2.11.0+cpu
 tensorflow==2.15.0
