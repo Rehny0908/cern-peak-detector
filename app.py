@@ -1,6 +1,9 @@
 import streamlit as st
 import pandas as pd
 from sklearn.ensemble import IsolationForest
+import uproot
+import io
+
 
 st.set_page_config(page_title="CERN KI Analyzer", layout="wide")
 
@@ -39,7 +42,10 @@ st.markdown("""
 # -----------------------------
 # UPLOAD
 # -----------------------------
-uploaded_file = st.file_uploader("📁 CSV-Datei hochladen", type=["csv"])
+uploaded_file = st.file_uploader(
+    "📁 ROOT- oder CSV-Datei hochladen",
+    type=["csv", "root"]
+)
 
 if uploaded_file:
 
@@ -48,7 +54,51 @@ if uploaded_file:
     # -----------------------------
     st.header("🔵 Phase 1: Rohdaten")
 
+# -----------------------------
+# CSV DATEI
+# -----------------------------
+if uploaded_file.name.endswith(".csv"):
+
     df = pd.read_csv(uploaded_file)
+
+# -----------------------------
+# ROOT DATEI
+# -----------------------------
+elif uploaded_file.name.endswith(".root"):
+
+    st.info("ROOT-Datei erkannt")
+
+    # ROOT öffnen
+    file = uproot.open(uploaded_file)
+
+    # Tree auswählen
+    tree = file["Btree/DecayTree"]
+
+    # Features definieren
+    root_features = [
+        "Bplus_PT",
+        "Bplus_MM",
+        "Bplus_IPCHI2_OWNPV",
+        "Bplus_FDCHI2_OWNPV",
+        "Bplus_DIRA_OWNPV",
+        "muplus_PT",
+        "muminus_PT"
+    ]
+
+    # nur existierende Features nehmen
+    available = [
+        f for f in root_features
+        if f in tree.keys()
+    ]
+
+    # ROOT -> pandas
+    df = tree.arrays(available, library="pd")
+
+    # bessere Namensgleichheit
+    if "Bplus_MM" in df.columns:
+        df["Bplus_M"] = df["Bplus_MM"]
+
+    st.success("ROOT-Datei erfolgreich geladen")
 
     st.write(f"📦 Ursprüngliche Events: {len(df):,}")
 
