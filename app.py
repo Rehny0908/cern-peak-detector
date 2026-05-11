@@ -19,44 +19,46 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("🧪 KI-gestützte Analyse von CERN-Daten")
+st.title("🧪 KI-gestützte Analyse von CERN-Teilchendaten")
+
 
 # =====================================
-# ERKLÄRUNG
+# PROJEKTBESCHREIBUNG
 # =====================================
-st.header("📘 Was macht diese App?")
+st.header("📘 Projektbeschreibung")
 
 st.markdown("""
-Diese App analysiert Daten aus Teilchenkollisionen.
+Diese Anwendung analysiert reale CERN-Kollisionsdaten aus ROOT-Dateien.
 
-### Ziele:
-- große Datenmengen reduzieren
-- normale Ereignisse erkennen
-- ungewöhnliche Ereignisse (Anomalien) finden
-- KI zur Teilchenanalyse verwenden
+Ziel ist die Identifikation seltener oder ungewöhnlicher Ereignisse
+mithilfe unüberwachter Machine-Learning-Verfahren.
 
-Die Daten stammen aus CERN ROOT-Dateien.
+Dabei werden zwei unterschiedliche KI-Ansätze systematisch verglichen.
 """)
 
+
 # =====================================
-# DATEN ERKLÄRUNG
+# PHYSIKALISCHE FEATURES
 # =====================================
 st.header("📊 Physikalische Variablen")
 
 st.markdown("""
-- **Bplus_PT** → Transversalimpuls des B+ Teilchens
-- **Bplus_M / Bplus_MM** → Masse des Teilchens
-- **Bplus_IPCHI2_OWNPV** → Abstand zum Kollisionspunkt
-- **Bplus_FDCHI2_OWNPV** → Flugdistanz
-- **muplus_PT / muminus_PT** → Impuls der Myonen
+Die Analyse basiert auf rekonstruierten Eigenschaften von B⁺-Mesonen:
 
-Diese Werte helfen der KI dabei, ungewöhnliche Ereignisse zu erkennen.
+- **Bplus_PT** → Transversalimpuls des Teilchens  
+- **Bplus_M / Bplus_MM** → Invariante Masse des Kandidaten  
+- **Bplus_IPCHI2_OWNPV** → Impact Parameter χ² zum Primärvertex  
+- **Bplus_FDCHI2_OWNPV** → Flugdistanzsignifikanz  
+- **muplus_PT / muminus_PT** → Impuls der Zerfallsprodukte  
+
+Diese Größen beschreiben die kinematische Struktur der Ereignisse.
 """)
+
 
 # =====================================
 # SIDEBAR
 # =====================================
-st.sidebar.header("⚙ Einstellungen")
+st.sidebar.header("⚙ Konfiguration")
 
 sample_size = st.sidebar.slider(
     "Stichprobengröße",
@@ -67,11 +69,12 @@ sample_size = st.sidebar.slider(
 )
 
 contamination = st.sidebar.slider(
-    "Anteil Anomalien",
+    "Erwarteter Anomalieanteil",
     0.01,
     0.20,
     0.05
 )
+
 
 # =====================================
 # FILE UPLOAD
@@ -81,49 +84,38 @@ uploaded_file = st.file_uploader(
     type=["csv", "root"]
 )
 
+
 # =====================================
-# DATEI VERARBEITEN
+# DATENVERARBEITUNG
 # =====================================
 if uploaded_file is not None:
 
-    st.header("🔵 Phase 1: Rohdaten")
-
     df = None
 
-    # =================================
-    # CSV
-    # =================================
+    # ---------------- CSV ----------------
     if uploaded_file.name.endswith(".csv"):
 
         try:
             df = pd.read_csv(uploaded_file)
-            st.success("CSV-Datei erfolgreich geladen")
-
+            st.success("CSV erfolgreich geladen")
         except Exception as e:
-            st.error(f"Fehler beim Laden der CSV-Datei: {e}")
+            st.error(f"Fehler beim CSV-Laden: {e}")
             st.stop()
 
-    # =================================
-    # ROOT
-    # =================================
+
+    # ---------------- ROOT ----------------
     elif uploaded_file.name.endswith(".root"):
 
         st.info("ROOT-Datei erkannt")
 
         try:
-            # ROOT öffnen
             file = uproot.open(uploaded_file)
 
-            st.write("📂 ROOT Keys:")
-            st.write(file.keys())
-
-            # Tree auswählen
             tree = file["Btree/DecayTree"]
 
-            st.success("DecayTree gefunden")
+            st.write("Verfügbare ROOT-Keys:", file.keys())
 
-            # Features
-            root_features = [
+            features = [
                 "Bplus_PT",
                 "Bplus_MM",
                 "Bplus_IPCHI2_OWNPV",
@@ -133,91 +125,63 @@ if uploaded_file is not None:
                 "muminus_PT"
             ]
 
-            # existierende Features
-            available = [
-                f for f in root_features
-                if f in tree.keys()
-            ]
+            available = [f for f in features if f in tree.keys()]
 
-            st.write("✔ Verfügbare Features:")
-            st.write(available)
-
-            # ROOT -> pandas
             df = tree.arrays(available, library="pd")
 
-            # bessere Namensgleichheit
             if "Bplus_MM" in df.columns:
                 df["Bplus_M"] = df["Bplus_MM"]
 
-            st.success("ROOT-Datei erfolgreich geladen")
+            st.success("ROOT erfolgreich geladen")
 
         except Exception as e:
-            st.error(f"Fehler beim Laden der ROOT-Datei: {e}")
+            st.error(f"ROOT Fehler: {e}")
             st.stop()
 
-    # =================================
-    # DATEN CHECK
-    # =================================
+
+    # =====================================
+    # DATENBASIS
+    # =====================================
     if df is not None:
 
-        st.write(f"📦 Ursprüngliche Events: {len(df):,}")
+        st.write(f"Ursprüngliche Events: {len(df):,}")
 
-        # Sampling
-        if len(df) > sample_size:
-            df = df.sample(
-                n=sample_size,
-                random_state=42
-            )
+        df = df.sample(min(len(df), sample_size), random_state=42)
+        df = df.dropna()
 
-        st.write(f"📉 Verwendete Events: {len(df):,}")
+        st.write(f"Verwendete Events: {len(df):,}")
 
         st.dataframe(df.head())
 
-        # =================================
-        # MASSENPEAK
-        # =================================
+
+        # =====================================
+        # MASSENVERTEILUNG
+        # =====================================
         if "Bplus_M" in df.columns:
 
-            st.header("🟣 Physikalischer Mass-Peak")
+            st.header("🟣 Invariante Massenverteilung")
 
             fig, ax = plt.subplots(figsize=(10, 5))
 
-            ax.hist(
-                df["Bplus_M"],
-                bins=100
-            )
+            ax.hist(df["Bplus_M"], bins=100)
 
-            ax.set_xlabel("Masse (MeV)")
-            ax.set_ylabel("Events")
-            ax.set_title("B+ Mass Peak")
+            ax.set_xlabel("Masse [MeV]")
+            ax.set_ylabel("Anzahl Events")
+            ax.set_title("Rekonstruierte B⁺-Masse")
 
             st.pyplot(fig)
 
             st.markdown("""
-Der Peak bei ungefähr 5300 MeV entspricht vermutlich echten B+ Zerfällen.
+Der Peak bei ca. 5300 MeV entspricht rekonstruierten B⁺-Zerfällen.
 
-Bereiche außerhalb des Peaks sind meist Hintergrundereignisse.
+Die restliche Verteilung beschreibt Hintergrundereignisse.
 """)
 
-        # =================================
-        # CLEANING
-        # =================================
-        st.header("🟡 Phase 2: Datenbereinigung")
 
-        before = len(df)
-
-        df = df.dropna()
-
-        after = len(df)
-
-        st.write(f"Vorher: {before:,}")
-        st.write(f"Nachher: {after:,}")
-        st.write(f"❌ Entfernt: {before - after:,}")
-
-        # =================================
-        # FEATURE AUSWAHL
-        # =================================
-        st.header("🟠 Phase 3: Feature Auswahl")
+        # =====================================
+        # FEATURE SELECTION
+        # =====================================
+        st.header("🟡 Feature-Auswahl")
 
         features = [
             "Bplus_PT",
@@ -229,255 +193,164 @@ Bereiche außerhalb des Peaks sind meist Hintergrundereignisse.
             "muminus_PT"
         ]
 
-        available_features = [
-            f for f in features
-            if f in df.columns
-        ]
-
-        st.write("✔ Genutzte Features:")
-        st.write(available_features)
-
-        if len(available_features) < 2:
-            st.error("Nicht genug Features verfügbar")
-            st.stop()
+        available_features = [f for f in features if f in df.columns]
 
         X = df[available_features]
 
-        # =================================
+        st.write("Verwendete Features:", available_features)
+
+
+        # =====================================
         # PHYSIK FILTER
-        # =================================
-        st.header("🟠 Phase 4: Physikalische Filter")
+        # =====================================
+        st.header("🟠 Physikalischer Filter")
 
         if "Bplus_PT" in X.columns:
 
             pt_cut = st.slider(
-                "Minimaler Bplus_PT",
+                "PT Cut",
                 float(X["Bplus_PT"].min()),
                 float(X["Bplus_PT"].max()),
                 float(X["Bplus_PT"].median())
             )
 
-            before_filter = len(X)
-
             X = X[X["Bplus_PT"] > pt_cut]
 
-            after_filter = len(X)
 
-            st.write(
-                f"📉 Nach PT-Filter: {after_filter:,} "
-                f"({before_filter - after_filter:,} entfernt)"
+        # =====================================
+        # SCALING
+        # =====================================
+        st.header("🟢 Feature Scaling")
+
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X)
+
+        st.success("Standardisierung abgeschlossen")
+
+
+        # =====================================
+        # MODELLVERGLEICH
+        # =====================================
+        st.header("🤖 Vergleich der KI-Modelle")
+
+        st.markdown("""
+Zwei unüberwachte Verfahren werden verglichen:
+
+- Isolation Forest: strukturbasierte Ausreißererkennung
+- Autoencoder: rekonstruktionsbasierte Fehlerdetektion
+""")
+
+        col1, col2 = st.columns(2)
+
+
+        # =====================================
+        # ISOLATION FOREST
+        # =====================================
+        with col1:
+
+            st.subheader("🌲 Isolation Forest")
+
+            iso_model = IsolationForest(
+                n_estimators=200,
+                contamination=contamination,
+                random_state=42
             )
 
-# =================================
-# 🟢 PHASE 5: FEATURE SCALING
-# =================================
-st.header("🟢 Phase 5: Feature Scaling")
+            iso_pred = iso_model.fit_predict(X_scaled)
 
-st.markdown("""
-Bevor Machine Learning angewendet wird, müssen alle Features skaliert werden.
+            iso_anom = (iso_pred == -1).sum()
 
-👉 Warum?
-- unterschiedliche Einheiten (MeV, GeV, Wahrscheinlichkeiten)
-- sonst dominiert eine Variable (z. B. Masse)
+            st.write(f"Anomalien: {iso_anom}")
 
-Wir standardisieren alle Werte auf:
-- Mittelwert = 0
-- Standardabweichung = 1
-""")
+            iso_df = X.copy()
+            iso_df["label"] = iso_pred
 
-scaler = StandardScaler()
-X_scaled = scaler.fit_transform(X)
+            if "Bplus_M" in X.columns:
 
-st.success("Features erfolgreich standardisiert")
+                fig, ax = plt.subplots()
 
-# =================================
-# 🤖 PHASE 6: KI MODELLVERGLEICH
-# =================================
-st.header("🤖 Phase 6: Vergleich zweier KI-Modelle")
+                ax.scatter(
+                    X["Bplus_M"],
+                    X["Bplus_PT"],
+                    c=iso_pred,
+                    s=5
+                )
 
-st.markdown("""
-In dieser Phase vergleichen wir zwei verschiedene Ansätze zur Anomalieerkennung:
+                ax.set_title("Isolation Forest")
 
-### 🌲 Isolation Forest
-- basiert auf Entscheidungsbäumen
-- isoliert ungewöhnliche Punkte schnell
+                st.pyplot(fig)
 
-### 🧠 Autoencoder
-- neuronales Netzwerk
-- lernt typische Muster der Daten
-- erkennt Abweichungen über Rekonstruktionsfehler
-""")
 
-col1, col2 = st.columns(2)
+        # =====================================
+        # AUTOENCODER
+        # =====================================
+        with col2:
 
-# =========================================================
-# 🌲 ISOLATION FOREST (LINKS)
-# =========================================================
-with col1:
+            st.subheader("🧠 Autoencoder")
 
-    st.subheader("🌲 Isolation Forest")
+            input_dim = X_scaled.shape[1]
 
-    st.markdown("""
-    Dieser Algorithmus prüft:
-    👉 Wie leicht lässt sich ein Punkt isolieren?
+            inp = Input(shape=(input_dim,))
+            x = Dense(16, activation="relu")(inp)
+            x = Dense(8, activation="relu")(x)
+            out = Dense(input_dim, activation="linear")(x)
 
-    Je schneller ein Punkt isoliert wird,
-    desto wahrscheinlicher ist er eine Anomalie.
-    """)
+            model = Model(inp, out)
+            model.compile(optimizer="adam", loss="mse")
 
-    iso_model = IsolationForest(
-        n_estimators=200,
-        contamination=contamination,
-        random_state=42
-    )
+            model.fit(
+                X_scaled,
+                X_scaled,
+                epochs=20,
+                batch_size=256,
+                validation_split=0.2,
+                verbose=0
+            )
 
-    iso_model.fit(X_scaled)
-    iso_pred = iso_model.predict(X_scaled)
+            recon = model.predict(X_scaled)
 
-    # Ergebnis speichern
-    iso_df = X.copy()
-    iso_df["IsolationForest_Label"] = iso_pred
+            mse = np.mean(np.square(X_scaled - recon), axis=1)
 
-    iso_anomalies = np.sum(iso_pred == -1)
+            threshold = np.mean(mse) + 2 * np.std(mse)
 
-    st.write("### Ergebnisse")
-    st.write(f"🔴 Anomalien erkannt: {iso_anomalies}")
-    st.write(f"🟢 Normale Events: {np.sum(iso_pred == 1)}")
+            ae_pred = mse > threshold
 
-    # Visualisierung
-    if "Bplus_M" in iso_df.columns:
+            st.write(f"Anomalien: {ae_pred.sum()}")
 
-        st.markdown("### Visualisierung im Feature-Raum")
+            if "Bplus_M" in X.columns:
 
-        fig1, ax1 = plt.subplots(figsize=(6, 4))
+                fig, ax = plt.subplots()
 
-        ax1.scatter(
-            iso_df["Bplus_M"],
-            iso_df["Bplus_PT"],
-            c=iso_pred,
-            s=5
-        )
+                ax.scatter(
+                    X["Bplus_M"],
+                    X["Bplus_PT"],
+                    c=ae_pred,
+                    s=5
+                )
 
-        ax1.set_title("Isolation Forest Ergebnis")
-        ax1.set_xlabel("Bplus_M (Masse)")
-        ax1.set_ylabel("Bplus_PT (Impuls)")
+                ax.set_title("Autoencoder")
 
-        st.pyplot(fig1)
+                st.pyplot(fig)
 
-# =========================================================
-# 🧠 AUTOENCODER (RECHTS)
-# =========================================================
-with col2:
 
-    st.subheader("🧠 Autoencoder")
+        # =====================================
+        # VERGLEICH
+        # =====================================
+        st.header("📊 Ergebnisvergleich")
 
-    st.markdown("""
-    Dieser Algorithmus funktioniert anders:
+        iso_mask = iso_pred == -1
+        ae_mask = ae_pred
 
-    👉 Er lernt, normale Ereignisse zu rekonstruieren.
+        both = (iso_mask & ae_mask).sum()
+        only_iso = (iso_mask & ~ae_mask).sum()
+        only_ae = (~iso_mask & ae_mask).sum()
 
-    Wenn die Rekonstruktion schlecht ist → Anomalie.
-    """)
+        total = len(X)
 
-    input_dim = X_scaled.shape[1]
+        st.write(f"Beide Modelle: {both} ({both/total:.2%})")
+        st.write(f"Nur Isolation Forest: {only_iso}")
+        st.write(f"Nur Autoencoder: {only_ae}")
 
-    # Netzwerkarchitektur
-    input_layer = Input(shape=(input_dim,))
+        agreement = (iso_mask == ae_mask).mean()
 
-    encoded = Dense(16, activation="relu")(input_layer)
-    encoded = Dense(8, activation="relu")(encoded)
-
-    decoded = Dense(16, activation="relu")(encoded)
-    decoded = Dense(input_dim, activation="linear")(decoded)
-
-    autoencoder = Model(input_layer, decoded)
-
-    autoencoder.compile(
-        optimizer="adam",
-        loss="mse"
-    )
-
-    # Training
-    st.markdown("### Training des Modells")
-
-    with st.spinner("Autoencoder lernt Muster der Daten..."):
-
-        autoencoder.fit(
-            X_scaled,
-            X_scaled,
-            epochs=20,
-            batch_size=256,
-            validation_split=0.2,
-            verbose=0
-        )
-
-    # Rekonstruktion
-    reconstructed = autoencoder.predict(X_scaled, verbose=0)
-
-    # Fehlerberechnung
-    reconstruction_error = np.mean(
-        np.power(X_scaled - reconstructed, 2),
-        axis=1
-    )
-
-    # Schwellenwert
-    threshold = reconstruction_error.mean() + 2 * reconstruction_error.std()
-
-    ae_pred = reconstruction_error > threshold
-
-    st.markdown("### Ergebnisse")
-    st.write(f"🔴 Anomalien erkannt: {np.sum(ae_pred)}")
-    st.write(f"🟢 Normale Events: {len(ae_pred) - np.sum(ae_pred)}")
-
-    # Visualisierung
-    if "Bplus_M" in X.columns:
-
-        st.markdown("### Rekonstruktionsbasierte Anomalien")
-
-        fig2, ax2 = plt.subplots(figsize=(6, 4))
-
-        ax2.scatter(
-            X["Bplus_M"],
-            X["Bplus_PT"],
-            c=ae_pred,
-            s=5
-        )
-
-        ax2.set_title("Autoencoder Ergebnis")
-        ax2.set_xlabel("Bplus_M (Masse)")
-        ax2.set_ylabel("Bplus_PT (Impuls)")
-
-        st.pyplot(fig2)
-
-# =================================
-# 📊 PHASE 7: VERGLEICHSANALYSE
-# =================================
-st.header("📊 Phase 7: Wissenschaftlicher Vergleich")
-
-st.markdown("""
-Jetzt vergleichen wir beide Modelle direkt:
-
-👉 Ziel:
-- erkennen beide dieselben Anomalien?
-- wo unterscheiden sie sich?
-- welches Modell reagiert anders?
-""")
-
-iso_mask = iso_pred == -1
-ae_mask = ae_pred
-
-both = np.sum(iso_mask & ae_mask)
-only_iso = np.sum(iso_mask & ~ae_mask)
-only_ae = np.sum(~iso_mask & ae_mask)
-
-total = len(X)
-
-st.markdown("### Vergleich der Ergebnisse")
-
-st.write(f"🔁 Beide Modelle erkennen: {both} ({both/total:.2%})")
-st.write(f"🌲 Nur Isolation Forest: {only_iso}")
-st.write(f"🧠 Nur Autoencoder: {only_ae}")
-
-agreement = (iso_mask == ae_mask).mean()
-
-st.write(f"📏 Gesamt-Übereinstimmung: {agreement:.2%}")
+        st.write(f"Übereinstimmung: {agreement:.2%}")
