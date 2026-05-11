@@ -269,61 +269,29 @@ Bereiche außerhalb des Peaks sind meist Hintergrundereignisse.
             )
 
 # =================================
-# 🟢 PHASE 5: FEATURE SCALING
+# 🟢 FEATURE SCALING
 # =================================
-st.header("🟢 Phase 5: Feature Scaling")
-
-st.markdown("""
-Bevor Machine Learning angewendet wird, müssen alle Features skaliert werden.
-
-👉 Warum?
-- unterschiedliche Einheiten (MeV, GeV, Wahrscheinlichkeiten)
-- sonst dominiert eine Variable (z. B. Masse)
-
-Wir standardisieren alle Werte auf:
-- Mittelwert = 0
-- Standardabweichung = 1
-""")
+st.header("🟢 Feature Scaling")
 
 scaler = StandardScaler()
 X_scaled = scaler.fit_transform(X)
 
-st.success("Features erfolgreich standardisiert")
+st.success("Scaling abgeschlossen")
+
 
 # =================================
-# 🤖 PHASE 6: KI MODELLVERGLEICH
+# 🤖 MODELLVERGLEICH
 # =================================
-st.header("🤖 Phase 6: Vergleich zweier KI-Modelle")
-
-st.markdown("""
-In dieser Phase vergleichen wir zwei verschiedene Ansätze zur Anomalieerkennung:
-
-### 🌲 Isolation Forest
-- basiert auf Entscheidungsbäumen
-- isoliert ungewöhnliche Punkte schnell
-
-### 🧠 Autoencoder
-- neuronales Netzwerk
-- lernt typische Muster der Daten
-- erkennt Abweichungen über Rekonstruktionsfehler
-""")
+st.header("🤖 KI Modellvergleich")
 
 col1, col2 = st.columns(2)
 
 # =========================================================
-# 🌲 ISOLATION FOREST (LINKS)
+# 🌲 ISOLATION FOREST
 # =========================================================
 with col1:
 
     st.subheader("🌲 Isolation Forest")
-
-    st.markdown("""
-    Dieser Algorithmus prüft:
-    👉 Wie leicht lässt sich ein Punkt isolieren?
-
-    Je schneller ein Punkt isoliert wird,
-    desto wahrscheinlicher ist er eine Anomalie.
-    """)
 
     iso_model = IsolationForest(
         n_estimators=200,
@@ -331,110 +299,71 @@ with col1:
         random_state=42
     )
 
-    iso_model.fit(X_scaled)
-    iso_pred = iso_model.predict(X_scaled)
+    iso_pred = iso_model.fit_predict(X_scaled)
 
-    # Ergebnis speichern
+    iso_anom = (iso_pred == -1).sum()
+
+    st.metric("Anomalien", iso_anom)
+
     iso_df = X.copy()
-    iso_df["IsolationForest_Label"] = iso_pred
+    iso_df["label"] = iso_pred
 
-    iso_anomalies = np.sum(iso_pred == -1)
+    if "Bplus_M" in X.columns:
 
-    st.write("### Ergebnisse")
-    st.write(f"🔴 Anomalien erkannt: {iso_anomalies}")
-    st.write(f"🟢 Normale Events: {np.sum(iso_pred == 1)}")
-
-    # Visualisierung
-    if "Bplus_M" in iso_df.columns:
-
-        st.markdown("### Visualisierung im Feature-Raum")
-
-        fig1, ax1 = plt.subplots(figsize=(6, 4))
+        fig1, ax1 = plt.subplots()
 
         ax1.scatter(
-            iso_df["Bplus_M"],
-            iso_df["Bplus_PT"],
+            X["Bplus_M"],
+            X["Bplus_PT"],
             c=iso_pred,
             s=5
         )
 
-        ax1.set_title("Isolation Forest Ergebnis")
-        ax1.set_xlabel("Bplus_M (Masse)")
-        ax1.set_ylabel("Bplus_PT (Impuls)")
+        ax1.set_title("Isolation Forest")
 
         st.pyplot(fig1)
 
+
 # =========================================================
-# 🧠 AUTOENCODER (RECHTS)
+# 🧠 AUTOENCODER
 # =========================================================
 with col2:
 
     st.subheader("🧠 Autoencoder")
 
-    st.markdown("""
-    Dieser Algorithmus funktioniert anders:
-
-    👉 Er lernt, normale Ereignisse zu rekonstruieren.
-
-    Wenn die Rekonstruktion schlecht ist → Anomalie.
-    """)
-
     input_dim = X_scaled.shape[1]
 
-    # Netzwerkarchitektur
-    input_layer = Input(shape=(input_dim,))
+    inp = Input(shape=(input_dim,))
+    x = Dense(16, activation="relu")(inp)
+    x = Dense(8, activation="relu")(x)
+    out = Dense(input_dim, activation="linear")(x)
 
-    encoded = Dense(16, activation="relu")(input_layer)
-    encoded = Dense(8, activation="relu")(encoded)
+    autoencoder = Model(inp, out)
+    autoencoder.compile(optimizer="adam", loss="mse")
 
-    decoded = Dense(16, activation="relu")(encoded)
-    decoded = Dense(input_dim, activation="linear")(decoded)
-
-    autoencoder = Model(input_layer, decoded)
-
-    autoencoder.compile(
-        optimizer="adam",
-        loss="mse"
+    autoencoder.fit(
+        X_scaled,
+        X_scaled,
+        epochs=20,
+        batch_size=256,
+        validation_split=0.2,
+        verbose=0
     )
 
-    # Training
-    st.markdown("### Training des Modells")
+    recon = autoencoder.predict(X_scaled, verbose=0)
 
-    with st.spinner("Autoencoder lernt Muster der Daten..."):
+    mse = np.mean(np.square(X_scaled - recon), axis=1)
 
-        autoencoder.fit(
-            X_scaled,
-            X_scaled,
-            epochs=20,
-            batch_size=256,
-            validation_split=0.2,
-            verbose=0
-        )
+    threshold = np.percentile(mse, 95)
+    ae_pred = mse > threshold
 
-    # Rekonstruktion
-    reconstructed = autoencoder.predict(X_scaled, verbose=0)
+    ae_anom = ae_pred.sum()
 
-    # Fehlerberechnung
-    reconstruction_error = np.mean(
-        np.power(X_scaled - reconstructed, 2),
-        axis=1
-    )
+    st.metric("Anomalien", ae_anom)
 
-    # Schwellenwert
-    threshold = reconstruction_error.mean() + 2 * reconstruction_error.std()
-
-    ae_pred = reconstruction_error > threshold
-
-    st.markdown("### Ergebnisse")
-    st.write(f"🔴 Anomalien erkannt: {np.sum(ae_pred)}")
-    st.write(f"🟢 Normale Events: {len(ae_pred) - np.sum(ae_pred)}")
-
-    # Visualisierung
     if "Bplus_M" in X.columns:
 
-        st.markdown("### Rekonstruktionsbasierte Anomalien")
-
-        fig2, ax2 = plt.subplots(figsize=(6, 4))
+        fig2, ax2 = plt.subplots()
 
         ax2.scatter(
             X["Bplus_M"],
@@ -443,41 +372,29 @@ with col2:
             s=5
         )
 
-        ax2.set_title("Autoencoder Ergebnis")
-        ax2.set_xlabel("Bplus_M (Masse)")
-        ax2.set_ylabel("Bplus_PT (Impuls)")
+        ax2.set_title("Autoencoder")
 
         st.pyplot(fig2)
 
-# =================================
-# 📊 PHASE 7: VERGLEICHSANALYSE
-# =================================
-st.header("📊 Phase 7: Wissenschaftlicher Vergleich")
 
-st.markdown("""
-Jetzt vergleichen wir beide Modelle direkt:
-
-👉 Ziel:
-- erkennen beide dieselben Anomalien?
-- wo unterscheiden sie sich?
-- welches Modell reagiert anders?
-""")
+# =================================
+# 📊 VERGLEICH
+# =================================
+st.header("📊 Vergleich")
 
 iso_mask = iso_pred == -1
 ae_mask = ae_pred
 
-both = np.sum(iso_mask & ae_mask)
-only_iso = np.sum(iso_mask & ~ae_mask)
-only_ae = np.sum(~iso_mask & ae_mask)
+both = (iso_mask & ae_mask).sum()
+only_iso = (iso_mask & ~ae_mask).sum()
+only_ae = (~iso_mask & ae_mask).sum()
 
 total = len(X)
 
-st.markdown("### Vergleich der Ergebnisse")
-
-st.write(f"🔁 Beide Modelle erkennen: {both} ({both/total:.2%})")
-st.write(f"🌲 Nur Isolation Forest: {only_iso}")
-st.write(f"🧠 Nur Autoencoder: {only_ae}")
+st.write(f"Overlap: {both} ({both/total:.2%})")
+st.write(f"Nur IF: {only_iso}")
+st.write(f"Nur AE: {only_ae}")
 
 agreement = (iso_mask == ae_mask).mean()
 
-st.write(f"📏 Gesamt-Übereinstimmung: {agreement:.2%}")
+st.metric("Übereinstimmung", f"{agreement:.2%}")
