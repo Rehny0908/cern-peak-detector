@@ -421,7 +421,7 @@ with col2:
     )
 
     # Schwellenwert
-    threshold = np.percentile(reconstruction_error, 95)
+    threshold = reconstruction_error.mean() + 2 * reconstruction_error.std()
 
     ae_pred = reconstruction_error > threshold
 
